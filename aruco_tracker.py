@@ -7,6 +7,8 @@ Detects and tracks ArUco markers in real-time from camera feed
 import cv2
 import numpy as np
 import argparse
+import json
+import os
 
 
 class ArucoTracker:
@@ -81,7 +83,8 @@ class ArucoTracker:
 
     def get_default_camera_matrix(self, frame_width, frame_height):
         """
-        Get default camera matrix (approximation without calibration)
+        Get default camera matrix for ArduCam or similar cameras
+        Uses typical ArduCam calibration parameters or identity-like matrix
 
         Args:
             frame_width: Frame width
@@ -91,8 +94,14 @@ class ArucoTracker:
             camera_matrix: Default camera intrinsic matrix
             dist_coeffs: Default distortion coefficients (zeros)
         """
-        # Approximate focal length (assuming ~60 degree FOV)
-        focal_length = frame_width
+        # Typical ArduCam calibration parameters for common resolutions
+        # For 1280x720 or similar, typical focal length is around 600-800 pixels
+        # Using a more standard approach based on sensor size
+
+        # Common ArduCam focal length approximation (in pixels)
+        # For most ArduCam modules, fx ≈ fy ≈ width * 0.7 to 0.9
+        focal_length = frame_width * 0.8
+
         center_x = frame_width / 2.0
         center_y = frame_height / 2.0
 
@@ -105,7 +114,9 @@ class ArucoTracker:
             dtype=np.float32,
         )
 
-        dist_coeffs = np.zeros((4, 1), dtype=np.float32)
+        # ArduCam typically has minimal distortion, but slight radial distortion
+        # Using small values typical for ArduCam modules
+        dist_coeffs = np.array([0.0, 0.0, 0.0, 0.0], dtype=np.float32).reshape(4, 1)
 
         return camera_matrix, dist_coeffs
 
@@ -170,25 +181,23 @@ class ArucoTracker:
 
         return best_corners, best_ids
 
-    def draw_markers(self, frame, corners, ids, camera_matrix=None, dist_coeffs=None):
+    def draw_markers(self, frame, corners, ids):
         """
-        Draw detected markers on the frame with 3D cube overlay
+        Draw detected markers on the frame with square outline and ID
 
         Args:
             frame: Input frame
             corners: Detected marker corners
             ids: Detected marker IDs
-            camera_matrix: Camera intrinsic matrix for 3D drawing
-            dist_coeffs: Distortion coefficients
 
         Returns:
             frame: Frame with drawn markers
         """
         if ids is not None:
-            # Draw marker boundaries
+            # Draw marker boundaries (square outline)
             cv2.aruco.drawDetectedMarkers(frame, corners, ids)
 
-            # Draw 3D cube for each marker
+            # Draw ID for each marker
             for i, corner in enumerate(corners):
                 marker_id = ids[i][0]
                 corner = corner[0]
@@ -196,9 +205,6 @@ class ArucoTracker:
                 # Calculate center
                 center_x = int(np.mean(corner[:, 0]))
                 center_y = int(np.mean(corner[:, 1]))
-
-                # Draw center point
-                cv2.circle(frame, (center_x, center_y), 5, (0, 255, 0), -1)
 
                 # Draw ID text with background
                 label = f"ID: {marker_id}"
@@ -222,108 +228,7 @@ class ArucoTracker:
                     2,
                 )
 
-                # Draw 3D cube if camera matrix is available
-                if camera_matrix is not None:
-                    self.draw_cube(frame, corner, camera_matrix, dist_coeffs)
-
         return frame
-
-    def draw_cube(self, frame, corner, camera_matrix, dist_coeffs=None):
-        """
-        Draw a 3D cube around the marker
-
-        Args:
-            frame: Input frame
-            corner: Marker corner points (4x2 array)
-            camera_matrix: Camera intrinsic matrix
-            dist_coeffs: Distortion coefficients
-        """
-        # Define 3D points of a cube (in marker coordinate system)
-        # Cube extends above the marker plane
-        cube_size = self.marker_size * 0.5  # Half the marker size
-        object_points = np.array(
-            [
-                [-cube_size, -cube_size, 0],  # Bottom front-left
-                [cube_size, -cube_size, 0],  # Bottom front-right
-                [cube_size, cube_size, 0],  # Bottom back-right
-                [-cube_size, cube_size, 0],  # Bottom back-left
-                [-cube_size, -cube_size, cube_size * 2],  # Top front-left
-                [cube_size, -cube_size, cube_size * 2],  # Top front-right
-                [cube_size, cube_size, cube_size * 2],  # Top back-right
-                [-cube_size, cube_size, cube_size * 2],  # Top back-left
-            ],
-            dtype=np.float32,
-        )
-
-        # Estimate pose from marker corners
-        # Use the corner points to estimate the pose
-        marker_points = np.array(
-            [
-                [-self.marker_size / 2, -self.marker_size / 2, 0],
-                [self.marker_size / 2, -self.marker_size / 2, 0],
-                [self.marker_size / 2, self.marker_size / 2, 0],
-                [-self.marker_size / 2, self.marker_size / 2, 0],
-            ],
-            dtype=np.float32,
-        )
-
-        # Estimate pose
-        if dist_coeffs is None:
-            dist_coeffs = np.zeros((4, 1))
-
-        success, rvec, tvec = cv2.solvePnP(
-            marker_points, corner, camera_matrix, dist_coeffs
-        )
-
-        if success:
-            # Project 3D cube points to 2D
-            image_points, _ = cv2.projectPoints(
-                object_points, rvec, tvec, camera_matrix, dist_coeffs
-            )
-            image_points = np.int32(image_points).reshape(-1, 2)
-
-            # Draw cube edges
-            # Bottom face
-            cv2.line(
-                frame, tuple(image_points[0]), tuple(image_points[1]), (255, 0, 0), 2
-            )
-            cv2.line(
-                frame, tuple(image_points[1]), tuple(image_points[2]), (255, 0, 0), 2
-            )
-            cv2.line(
-                frame, tuple(image_points[2]), tuple(image_points[3]), (255, 0, 0), 2
-            )
-            cv2.line(
-                frame, tuple(image_points[3]), tuple(image_points[0]), (255, 0, 0), 2
-            )
-
-            # Top face
-            cv2.line(
-                frame, tuple(image_points[4]), tuple(image_points[5]), (0, 0, 255), 2
-            )
-            cv2.line(
-                frame, tuple(image_points[5]), tuple(image_points[6]), (0, 0, 255), 2
-            )
-            cv2.line(
-                frame, tuple(image_points[6]), tuple(image_points[7]), (0, 0, 255), 2
-            )
-            cv2.line(
-                frame, tuple(image_points[7]), tuple(image_points[4]), (0, 0, 255), 2
-            )
-
-            # Vertical edges
-            cv2.line(
-                frame, tuple(image_points[0]), tuple(image_points[4]), (0, 255, 0), 2
-            )
-            cv2.line(
-                frame, tuple(image_points[1]), tuple(image_points[5]), (0, 255, 0), 2
-            )
-            cv2.line(
-                frame, tuple(image_points[2]), tuple(image_points[6]), (0, 255, 0), 2
-            )
-            cv2.line(
-                frame, tuple(image_points[3]), tuple(image_points[7]), (0, 255, 0), 2
-            )
 
     def estimate_pose(
         self, corners, ids, camera_matrix=None, dist_coeffs=None, marker_size=0.05
@@ -408,7 +313,7 @@ class ArucoTracker:
             show_pose: Whether to show pose estimation axes
             camera_matrix: Camera intrinsic matrix for pose estimation
             dist_coeffs: Distortion coefficients for pose estimation
-            use_default_camera_matrix: Use default camera matrix for cube drawing if no calibration
+            use_default_camera_matrix: Use default camera matrix for pose estimation if no calibration
         """
         self.initialize_camera()
 
@@ -443,10 +348,8 @@ class ArucoTracker:
                 # Detect markers
                 corners, ids = self.detect_markers(frame)
 
-                # Draw markers with 3D cube overlay
-                frame = self.draw_markers(
-                    frame, corners, ids, camera_matrix, dist_coeffs
-                )
+                # Draw markers with square outline and ID
+                frame = self.draw_markers(frame, corners, ids)
 
                 # Estimate and draw pose axes if requested
                 if show_pose and camera_matrix is not None and dist_coeffs is not None:
@@ -506,6 +409,45 @@ class ArucoTracker:
         print("Tracker stopped")
 
 
+def load_calibration(calib_file):
+    """
+    Load camera calibration from JSON file
+
+    Args:
+        calib_file: Path to calibration JSON file
+
+    Returns:
+        camera_matrix: Camera intrinsic matrix
+        dist_coeffs: Distortion coefficients
+    """
+    if not os.path.exists(calib_file):
+        raise FileNotFoundError(f"Calibration file not found: {calib_file}")
+
+    with open(calib_file, "r", encoding="utf-8") as f:
+        calib_data = json.load(f)
+
+    # Extract camera matrix
+    camera_matrix = np.array(calib_data["camera_matrix"], dtype=np.float32)
+
+    # Extract distortion coefficients
+    dist_coeffs = np.array(calib_data["distortion_coefficients"], dtype=np.float32)
+
+    # Reshape distortion coefficients to (4, 1) or (5, 1) format
+    if len(dist_coeffs) == 5:
+        dist_coeffs = dist_coeffs.reshape(5, 1)
+    else:
+        dist_coeffs = dist_coeffs.reshape(-1, 1)
+
+    print(f"Loaded calibration from: {calib_file}")
+    print(f"Camera: {calib_data.get('camera', 'Unknown')}")
+    print(f"Image size: {calib_data.get('img_size', 'Unknown')}")
+    print(
+        f"Avg reprojection error: {calib_data.get('avg_reprojection_error', 'Unknown'):.4f}"
+    )
+
+    return camera_matrix, dist_coeffs
+
+
 def get_dictionary_from_name(name):
     """Convert dictionary name string to OpenCV constant"""
     dict_map = {
@@ -547,6 +489,9 @@ Examples:
   # Use 5x5_100 dictionary
   python aruco_tracker.py --dict 5x5_100
 
+  # Use camera calibration file
+  python aruco_tracker.py --calib calib_3937__0c45_6366__1280.json
+
 Available dictionaries:
   4x4_50, 4x4_100, 4x4_250, 4x4_1000
   5x5_50, 5x5_100, 5x5_250, 5x5_1000
@@ -582,6 +527,12 @@ Available dictionaries:
         action="store_true",
         help="Use faster but less robust detection (disables multi-strategy detection). Default: robust mode enabled",
     )
+    parser.add_argument(
+        "--calib",
+        type=str,
+        default=None,
+        help="Path to camera calibration JSON file (e.g., calib_*.json)",
+    )
 
     args = parser.parse_args()
 
@@ -610,12 +561,18 @@ Available dictionaries:
     )
     tracker.marker_size = args.marker_size
 
-    # For pose estimation, you would need to load camera calibration data
-    # Example (uncomment and provide your calibration file):
-    # camera_matrix = np.load('camera_matrix.npy')
-    # dist_coeffs = np.load('dist_coeffs.npy')
+    # Load camera calibration if provided
     camera_matrix = None
     dist_coeffs = None
+
+    if args.calib:
+        try:
+            camera_matrix, dist_coeffs = load_calibration(args.calib)
+        except Exception as e:
+            print(f"Error loading calibration file: {e}")
+            print("Falling back to default camera matrix")
+            camera_matrix = None
+            dist_coeffs = None
 
     # Run tracker
     tracker.run(
