@@ -84,16 +84,66 @@ class ArucoTracker:
 
         return params
 
-    def initialize_camera(self):
-        """Initialize camera capture"""
+    def initialize_camera(
+        self,
+        width=1280,
+        height=720,
+        fps=100,
+        exposure=150,
+        gain=40,
+        gamma=160,
+        brightness=0,
+        contrast=32,
+        use_arducam_settings=True,
+    ):
+        """
+        Initialize camera capture with ArduCam-optimized settings
+
+        Args:
+            width: Frame width (default: 1280)
+            height: Frame height (default: 720)
+            fps: Frames per second (default: 100)
+            exposure: Exposure value (default: 150)
+            gain: Gain value (default: 40)
+            gamma: Gamma value (default: 160)
+            brightness: Brightness value (default: 0)
+            contrast: Contrast value (default: 32)
+            use_arducam_settings: Apply ArduCam-specific settings (default: True)
+        """
         self.cap = cv2.VideoCapture(self.camera_id)
         if not self.cap.isOpened():
             raise RuntimeError(f"Failed to open camera {self.camera_id}")
 
-        # Set camera properties for better performance
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-        self.cap.set(cv2.CAP_PROP_FPS, 30)
+        if use_arducam_settings:
+            # Set FOURCC codec (MJPEG for ArduCam)
+            try:
+                self.cap.set(
+                    cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc("M", "J", "P", "G")
+                )
+            except Exception:
+                pass  # Some cameras may not support this
+
+        # Set resolution
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+
+        # Set fps
+        self.cap.set(cv2.CAP_PROP_FPS, fps)
+
+        if use_arducam_settings:
+            # Set exposure
+            self.cap.set(cv2.CAP_PROP_EXPOSURE, exposure)
+            self.cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1)
+
+            # Set gain and gamma
+            self.cap.set(cv2.CAP_PROP_GAIN, gain)
+            self.cap.set(cv2.CAP_PROP_GAMMA, gamma)
+
+            # Set brightness
+            self.cap.set(cv2.CAP_PROP_BRIGHTNESS, brightness)
+
+            # Set contrast
+            self.cap.set(cv2.CAP_PROP_CONTRAST, contrast)
 
     def get_default_camera_matrix(self, frame_width, frame_height):
         """
@@ -419,6 +469,10 @@ class ArucoTracker:
         use_default_camera_matrix=True,
         zmq_port=None,
         save_file=None,
+        use_arducam_settings=True,
+        camera_width=1280,
+        camera_height=720,
+        camera_fps=100,
     ):
         """
         Main tracking loop
@@ -430,8 +484,17 @@ class ArucoTracker:
             use_default_camera_matrix: Use default camera matrix for pose estimation if no calibration
             zmq_port: ZMQ port for streaming (None to disable)
             save_file: File path to save detections (None to disable)
+            use_arducam_settings: Apply ArduCam-specific camera settings (default: True)
+            camera_width: Camera frame width (default: 1280)
+            camera_height: Camera frame height (default: 720)
+            camera_fps: Camera frames per second (default: 100)
         """
-        self.initialize_camera()
+        self.initialize_camera(
+            width=camera_width,
+            height=camera_height,
+            fps=camera_fps,
+            use_arducam_settings=use_arducam_settings,
+        )
 
         # Get frame dimensions for default camera matrix
         ret, test_frame = self.cap.read()
@@ -454,9 +517,14 @@ class ArucoTracker:
         if save_file is not None and save_file.lower() != "none":
             self.setup_saving(save_file)
 
-        print("ArUco Tracker Started")
+        print("ArUco Gully Started")
         print(f"Dictionary: {self.get_dictionary_name()}")
         print(f"Camera device: {self.camera_id}")
+        print(f"Resolution: {camera_width}x{camera_height} @ {camera_fps} FPS")
+        if use_arducam_settings:
+            print("ArduCam settings: Enabled (exposure, gain, gamma, contrast)")
+        else:
+            print("ArduCam settings: Disabled (using camera defaults)")
         if zmq_port is not None:
             print(f"ZMQ streaming on port {zmq_port}")
         if save_file is not None:
@@ -731,6 +799,29 @@ Available dictionaries:
         default="detections.csv",
         help="Save detections to CSV file (default: detections.csv). Use 'none' to disable.",
     )
+    parser.add_argument(
+        "--no-arducam",
+        action="store_true",
+        help="Disable ArduCam-specific camera settings (use camera defaults)",
+    )
+    parser.add_argument(
+        "--camera-width",
+        type=int,
+        default=1280,
+        help="Camera frame width (default: 1280)",
+    )
+    parser.add_argument(
+        "--camera-height",
+        type=int,
+        default=720,
+        help="Camera frame height (default: 720)",
+    )
+    parser.add_argument(
+        "--camera-fps",
+        type=int,
+        default=100,
+        help="Camera frames per second (default: 100, ArduCam optimized)",
+    )
 
     args = parser.parse_args()
 
@@ -782,6 +873,10 @@ Available dictionaries:
         dist_coeffs=dist_coeffs,
         zmq_port=args.zmq_port,
         save_file=save_file,
+        use_arducam_settings=not args.no_arducam,
+        camera_width=args.camera_width,
+        camera_height=args.camera_height,
+        camera_fps=args.camera_fps,
     )
 
 

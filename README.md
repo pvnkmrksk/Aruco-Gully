@@ -1,6 +1,6 @@
 # ArUco Gully
 
-**ArUco Gully** (ಗಲ್ಲಿ - "gully" means alley/corridor in Kannada and many other Indian languages) is a robust, real-time ArUco marker detection and tracking system designed for tracking markers on objects moving through narrow corridors or confined spaces. Features ZMQ streaming and CSV data logging capabilities for real-time monitoring and analysis.
+**ArUco Gully** (ಗಲ್ಲಿ - "gully" means alley/corridor in Kannada) is a robust, real-time ArUco marker detection and tracking system designed for tracking markers on objects moving through narrow corridors or confined spaces. Optimized for **ArduCam** cameras with high-speed capture (100-120 FPS) and fixed exposure settings. Features ZMQ streaming and CSV data logging capabilities for real-time monitoring and analysis.
 
 ## Features
 
@@ -123,6 +123,10 @@ uv run python aruco_tracker.py [OPTIONS]
 - `--save FILE`: Save detections to CSV file (default: detections.csv, use 'none' to disable)
 - `--pose`: Enable pose estimation axes (requires camera calibration)
 - `--fast`: Use faster but less robust detection
+- `--no-arducam`: Disable ArduCam-specific camera settings (use camera defaults)
+- `--camera-width WIDTH`: Camera frame width (default: 1280)
+- `--camera-height HEIGHT`: Camera frame height (default: 720)
+- `--camera-fps FPS`: Camera frames per second (default: 100, optimized for ArduCam)
 
 ### Examples
 
@@ -151,10 +155,52 @@ uv run python aruco_tracker.py --zmq-port 5555
 uv run python aruco_tracker.py --save my_detections.csv
 ```
 
+**Use ArduCam settings (default):**
+```bash
+uv run python aruco_tracker.py --camera-fps 120
+```
+
+**Disable ArduCam settings (use camera defaults):**
+```bash
+uv run python aruco_tracker.py --no-arducam
+```
+
 **Combined usage:**
 ```bash
-  uv run python aruco_tracker.py --calib calib.json --zmq-port 5555 --save detections.csv --marker-size 0.002
+uv run python aruco_tracker.py --calib calib.json --zmq-port 5555 --save detections.csv --marker-size 0.002 --camera-fps 120
 ```
+
+## Camera Settings (ArduCam Optimized)
+
+ArUco Gully is optimized for **ArduCam** cameras with specific settings for high-speed tracking in narrow corridors. By default, the following settings are applied:
+
+- **Resolution**: 1280x720 (full resolution)
+- **Frame Rate**: 100-120 FPS (high-speed capture)
+- **Exposure**: 150 (fixed exposure for consistent lighting)
+- **Gain**: 40 (optimized for ArduCam sensors)
+- **Gamma**: 160 (enhanced contrast for marker detection)
+- **Brightness**: 0 (neutral)
+- **Contrast**: 32 (enhanced for better marker visibility)
+- **Codec**: MJPEG (for ArduCam compatibility)
+
+These settings ensure:
+- **Consistent exposure** - Prevents flickering in varying lighting
+- **High frame rates** - Essential for tracking fast-moving objects
+- **Optimized gain/gamma** - Better marker detection in challenging conditions
+- **Stable performance** - Reliable tracking in narrow corridors
+
+**To use camera defaults instead:**
+```bash
+uv run python aruco_tracker.py --no-arducam
+```
+
+**To customize camera settings:**
+```bash
+# Use 120 FPS and custom resolution
+uv run python aruco_tracker.py --camera-fps 120 --camera-width 1920 --camera-height 1080
+```
+
+**Note**: These settings are especially important for ArduCam modules, which require specific exposure and gain settings to prevent flickering and ensure stable high-speed capture. Other cameras may work with default settings using the `--no-arducam` flag.
 
 ## Camera Calibration
 
@@ -357,12 +403,15 @@ ArUco Gully is specifically designed for tracking objects moving through narrow 
 - **Robust detection** in challenging lighting conditions
 - **Real-time streaming** for monitoring moving objects
 - **Precise pose estimation** for trajectory analysis
+- **High-speed capture** (100-120 FPS) for fast-moving objects
+- **ArduCam optimization** with fixed exposure and gain settings
 
 **Typical applications:**
 - Assembly line tracking
 - Conveyor belt monitoring
 - Small object tracking in confined spaces
 - Quality control in narrow production lines
+- High-speed object tracking in industrial settings
 
 ## Tips for Best Results
 
