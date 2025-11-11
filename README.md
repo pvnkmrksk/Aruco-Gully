@@ -176,15 +176,17 @@ ArUco Gully is optimized for **ArduCam** cameras with specific settings for high
 
 - **Resolution**: 1280x720 (full resolution)
 - **Frame Rate**: 100-120 FPS (high-speed capture)
-- **Exposure**: 150 (fixed exposure for consistent lighting)
-- **Gain**: 40 (optimized for ArduCam sensors)
+- **Auto Exposure**: Disabled (manual exposure control)
+- **Exposure**: 1 (fixed exposure for consistent lighting, prevents flickering)
+- **Gain**: 10 (optimized for ArduCam sensors)
 - **Gamma**: 160 (enhanced contrast for marker detection)
 - **Brightness**: 0 (neutral)
 - **Contrast**: 32 (enhanced for better marker visibility)
 - **Codec**: MJPEG (for ArduCam compatibility)
 
 These settings ensure:
-- **Consistent exposure** - Prevents flickering in varying lighting
+- **Fixed exposure** - Auto exposure disabled, prevents flickering in varying lighting
+- **Consistent lighting** - Manual exposure control for stable marker detection
 - **High frame rates** - Essential for tracking fast-moving objects
 - **Optimized gain/gamma** - Better marker detection in challenging conditions
 - **Stable performance** - Reliable tracking in narrow corridors
@@ -200,7 +202,14 @@ uv run python aruco_tracker.py --no-arducam
 uv run python aruco_tracker.py --camera-fps 120 --camera-width 1920 --camera-height 1080
 ```
 
-**Note**: These settings are especially important for ArduCam modules, which require specific exposure and gain settings to prevent flickering and ensure stable high-speed capture. Other cameras may work with default settings using the `--no-arducam` flag.
+**Note**: These settings are especially important for ArduCam modules, which require fixed (manual) exposure and specific gain settings to prevent flickering and ensure stable high-speed capture. Auto exposure is disabled to maintain consistent lighting conditions.
+
+**On Linux**: ArUco Gully automatically uses `v4l2-ctl` to set camera parameters directly, which is more reliable for ArduCam cameras than OpenCV's camera properties. The system will:
+- Detect if v4l2-ctl is available
+- Use v4l2-ctl to set `exposure_time_absolute`, `auto_exposure`, `gain`, `gamma`, `brightness`, and `contrast`
+- Fall back to OpenCV properties if v4l2-ctl is not available (Windows/macOS)
+
+**Other cameras**: May work with default settings using the `--no-arducam` flag.
 
 ## Camera Calibration
 

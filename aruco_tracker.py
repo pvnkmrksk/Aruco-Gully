@@ -10,6 +10,7 @@ import argparse
 import json
 import os
 import time
+import subprocess
 from datetime import datetime
 
 try:
@@ -84,13 +85,63 @@ class ArucoTracker:
 
         return params
 
+    def get_v4l2_device_path(self):
+        """Get v4l2 device path from camera_id"""
+        if isinstance(self.camera_id, str) and self.camera_id.startswith("/dev/"):
+            return self.camera_id
+        elif isinstance(self.camera_id, int):
+            return f"/dev/video{self.camera_id}"
+        else:
+            return None
+
+    def set_v4l2_settings(
+        self,
+        device_path,
+        exposure=1,
+        gain=10,
+        gamma=160,
+        brightness=0,
+        contrast=32,
+    ):
+        """
+        Set camera settings using v4l2-ctl (more reliable for ArduCam)
+
+        Args:
+            device_path: Path to v4l2 device (e.g., /dev/video4)
+            exposure: Exposure time absolute (1-5000)
+            gain: Gain value (0-100)
+            gamma: Gamma value (72-500)
+            brightness: Brightness value (-64 to 64)
+            contrast: Contrast value (0-64)
+        """
+        if device_path is None or not os.path.exists(device_path):
+            return False
+
+        try:
+            # Set auto_exposure to Manual Mode (1)
+            # Set exposure_time_absolute, gain, gamma, brightness, contrast
+            cmd = [
+                "v4l2-ctl",
+                "-d",
+                device_path,
+                "--set-ctrl",
+                f"auto_exposure=1,exposure_time_absolute={exposure},gain={gain},gamma={gamma},brightness={brightness},contrast={contrast}",
+            ]
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=2, check=False
+            )
+            return result.returncode == 0
+        except (subprocess.TimeoutExpired, FileNotFoundError, Exception) as e:
+            print(f"Warning: Could not set v4l2 settings: {e}")
+            return False
+
     def initialize_camera(
         self,
         width=1280,
         height=720,
         fps=100,
-        exposure=150,
-        gain=40,
+        exposure=1,
+        gain=10,
         gamma=160,
         brightness=0,
         contrast=32,
@@ -131,9 +182,37 @@ class ArucoTracker:
         self.cap.set(cv2.CAP_PROP_FPS, fps)
 
         if use_arducam_settings:
-            # Set exposure
+            # Use v4l2-ctl for more reliable ArduCam settings (Linux only)
+            device_path = self.get_v4l2_device_path()
+            if device_path and os.path.exists("/usr/bin/v4l2-ctl"):
+                v4l2_success = self.set_v4l2_settings(
+                    device_path,
+                    exposure=exposure,
+                    gain=gain,
+                    gamma=gamma,
+                    brightness=brightness,
+                    contrast=contrast,
+                )
+                if v4l2_success:
+                    print(f"Applied ArduCam settings via v4l2-ctl on {device_path}")
+                else:
+                    print("Warning: v4l2-ctl settings failed, using OpenCV fallback")
+                    # Fallback to OpenCV settings
+                    self._set_opencv_camera_settings(
+                        exposure, gain, gamma, brightness, contrast
+                    )
+            else:
+                # Fallback to OpenCV settings (Windows/macOS or no v4l2-ctl)
+                self._set_opencv_camera_settings(
+                    exposure, gain, gamma, brightness, contrast
+                )
+
+    def _set_opencv_camera_settings(self, exposure, gain, gamma, brightness, contrast):
+        """Fallback method using OpenCV properties"""
+        try:
+            # Set exposure (disable auto exposure for fixed exposure)
+            self.cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0)  # 0 = manual exposure
             self.cap.set(cv2.CAP_PROP_EXPOSURE, exposure)
-            self.cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1)
 
             # Set gain and gamma
             self.cap.set(cv2.CAP_PROP_GAIN, gain)
@@ -144,6 +223,8 @@ class ArucoTracker:
 
             # Set contrast
             self.cap.set(cv2.CAP_PROP_CONTRAST, contrast)
+        except Exception as e:
+            print(f"Warning: Could not set some camera properties: {e}")
 
     def get_default_camera_matrix(self, frame_width, frame_height):
         """
