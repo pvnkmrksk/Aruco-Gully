@@ -45,3 +45,4 @@ aruco_frame_*.jpg
 .DS_Store
 Thumbs.db
 
+detections.json

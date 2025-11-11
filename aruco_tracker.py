@@ -9,10 +9,20 @@ import numpy as np
 import argparse
 import json
 import os
+import time
+from datetime import datetime
+
+try:
+    import zmq
+
+    ZMQ_AVAILABLE = True
+except ImportError:
+    ZMQ_AVAILABLE = False
+    print("Warning: pyzmq not available. ZMQ streaming disabled.")
 
 
 class ArucoTracker:
-    def __init__(self, dictionary_id=cv2.aruco.DICT_6X6_250, camera_id=0, robust=True):
+    def __init__(self, dictionary_id=cv2.aruco.DICT_4X4_100, camera_id=0, robust=True):
         """
         Initialize ArUco tracker
 
@@ -31,7 +41,11 @@ class ArucoTracker:
         self.detector = cv2.aruco.ArucoDetector(self.dictionary, self.parameters)
         self.camera_id = camera_id
         self.cap = None
-        self.marker_size = 0.05  # Default marker size in meters
+        self.marker_size = 0.001  # Default marker size in meters
+        self.zmq_socket = None
+        self.zmq_context = None
+        self.save_file = None
+        self.detections_log = []
 
     def _create_robust_parameters(self):
         """Create detector parameters optimized for robustness"""
@@ -231,7 +245,7 @@ class ArucoTracker:
         return frame
 
     def estimate_pose(
-        self, corners, ids, camera_matrix=None, dist_coeffs=None, marker_size=0.05
+        self, corners, ids, camera_matrix=None, dist_coeffs=None, marker_size=None
     ):
         """
         Estimate pose of detected markers (requires camera calibration)
@@ -241,7 +255,7 @@ class ArucoTracker:
             ids: Detected marker IDs
             camera_matrix: Camera intrinsic matrix
             dist_coeffs: Distortion coefficients
-            marker_size: Physical size of marker in meters
+            marker_size: Physical size of marker in meters (uses self.marker_size if None)
 
         Returns:
             rvecs: Rotation vectors
@@ -250,10 +264,96 @@ class ArucoTracker:
         if camera_matrix is None or dist_coeffs is None:
             return None, None
 
+        if marker_size is None:
+            marker_size = self.marker_size
+
         rvecs, tvecs, _ = cv2.aruco.estimatePoseSingleMarkers(
             corners, marker_size, camera_matrix, dist_coeffs
         )
         return rvecs, tvecs
+
+    def setup_zmq(self, port=5555):
+        """Setup ZMQ publisher for streaming detections"""
+        if not ZMQ_AVAILABLE:
+            print("ZMQ not available, skipping ZMQ setup")
+            return False
+
+        try:
+            self.zmq_context = zmq.Context()
+            self.zmq_socket = self.zmq_context.socket(zmq.PUB)
+            self.zmq_socket.bind(f"tcp://*:{port}")
+            print(f"ZMQ publisher started on port {port}")
+            return True
+        except Exception as e:
+            print(f"Failed to setup ZMQ: {e}")
+            return False
+
+    def setup_saving(self, save_file="detections.json"):
+        """Setup file for saving detections"""
+        self.save_file = save_file
+        self.detections_log = []
+        print(f"Will save detections to: {save_file}")
+
+    def send_zmq_detection(self, marker_id, timestamp, rvec=None, tvec=None):
+        """Send detection data via ZMQ"""
+        if self.zmq_socket is None:
+            return
+
+        detection_data = {"id": int(marker_id), "timestamp": timestamp, "pose": None}
+
+        if rvec is not None and tvec is not None:
+            # Convert rotation vector to Euler angles (simplified)
+            rvec_flat = rvec.flatten()
+            tvec_flat = tvec.flatten()
+            detection_data["pose"] = {
+                "rotation": rvec_flat.tolist(),
+                "translation": tvec_flat.tolist(),
+            }
+
+        try:
+            self.zmq_socket.send_json(detection_data)
+        except Exception as e:
+            print(f"ZMQ send error: {e}")
+
+    def save_detection(self, marker_id, timestamp, rvec=None, tvec=None):
+        """Save detection to log"""
+        if self.save_file is None:
+            return
+
+        detection = {"id": int(marker_id), "timestamp": timestamp, "pose": None}
+
+        if rvec is not None and tvec is not None:
+            rvec_flat = rvec.flatten()
+            tvec_flat = tvec.flatten()
+            detection["pose"] = {
+                "rotation": rvec_flat.tolist(),
+                "translation": tvec_flat.tolist(),
+            }
+
+        self.detections_log.append(detection)
+
+    def flush_detections(self):
+        """Write detections to file"""
+        if self.save_file is None or len(self.detections_log) == 0:
+            return
+
+        try:
+            # Append to file
+            if os.path.exists(self.save_file):
+                with open(self.save_file, "r", encoding="utf-8") as f:
+                    existing_data = json.load(f)
+            else:
+                existing_data = []
+
+            existing_data.extend(self.detections_log)
+
+            with open(self.save_file, "w", encoding="utf-8") as f:
+                json.dump(existing_data, f, indent=2)
+
+            print(f"Saved {len(self.detections_log)} detections to {self.save_file}")
+            self.detections_log = []
+        except Exception as e:
+            print(f"Error saving detections: {e}")
 
     def draw_pose(self, frame, corners, ids, rvecs, tvecs, camera_matrix, dist_coeffs):
         """
@@ -305,6 +405,8 @@ class ArucoTracker:
         camera_matrix=None,
         dist_coeffs=None,
         use_default_camera_matrix=True,
+        zmq_port=None,
+        save_file=None,
     ):
         """
         Main tracking loop
@@ -314,6 +416,8 @@ class ArucoTracker:
             camera_matrix: Camera intrinsic matrix for pose estimation
             dist_coeffs: Distortion coefficients for pose estimation
             use_default_camera_matrix: Use default camera matrix for pose estimation if no calibration
+            zmq_port: ZMQ port for streaming (None to disable)
+            save_file: File path to save detections (None to disable)
         """
         self.initialize_camera()
 
@@ -330,13 +434,26 @@ class ArucoTracker:
             )
             print("Using default camera matrix (approximation)")
 
+        # Setup ZMQ if requested
+        if zmq_port is not None:
+            self.setup_zmq(zmq_port)
+
+        # Setup saving if requested
+        if save_file is not None:
+            self.setup_saving(save_file)
+
         print("ArUco Tracker Started")
         print(f"Dictionary: {self.get_dictionary_name()}")
         print(f"Camera device: {self.camera_id}")
+        if zmq_port is not None:
+            print(f"ZMQ streaming on port {zmq_port}")
+        if save_file is not None:
+            print(f"Saving detections to {save_file}")
         print("Press 'q' to quit")
         print("Press 's' to save current frame")
 
         frame_count = 0
+        last_save_time = time.time()
 
         try:
             while True:
@@ -351,12 +468,30 @@ class ArucoTracker:
                 # Draw markers with square outline and ID
                 frame = self.draw_markers(frame, corners, ids)
 
-                # Estimate and draw pose axes if requested
-                if show_pose and camera_matrix is not None and dist_coeffs is not None:
+                # Estimate pose and handle ZMQ/saving
+                rvecs = None
+                tvecs = None
+                if camera_matrix is not None and dist_coeffs is not None:
                     rvecs, tvecs = self.estimate_pose(
                         corners, ids, camera_matrix, dist_coeffs, self.marker_size
                     )
-                    if rvecs is not None:
+
+                    # Send via ZMQ and save if markers detected
+                    if ids is not None and rvecs is not None:
+                        timestamp = datetime.now().isoformat()
+                        for i, marker_id in enumerate(ids):
+                            marker_id = marker_id[0]
+                            rvec = rvecs[i]
+                            tvec = tvecs[i]
+
+                            # Send via ZMQ
+                            self.send_zmq_detection(marker_id, timestamp, rvec, tvec)
+
+                            # Save to log
+                            self.save_detection(marker_id, timestamp, rvec, tvec)
+
+                    # Draw pose axes if requested
+                    if show_pose and rvecs is not None:
                         frame = self.draw_pose(
                             frame,
                             corners,
@@ -366,6 +501,12 @@ class ArucoTracker:
                             camera_matrix,
                             dist_coeffs,
                         )
+
+                # Auto-save detections every 5 seconds
+                current_time = time.time()
+                if save_file is not None and (current_time - last_save_time) > 5.0:
+                    self.flush_detections()
+                    last_save_time = current_time
 
                 # Display marker count and dictionary
                 marker_count = len(ids) if ids is not None else 0
@@ -399,12 +540,19 @@ class ArucoTracker:
         except KeyboardInterrupt:
             print("\nInterrupted by user")
         finally:
+            # Flush any remaining detections
+            if self.save_file is not None:
+                self.flush_detections()
             self.cleanup()
 
     def cleanup(self):
         """Release resources"""
         if self.cap is not None:
             self.cap.release()
+        if self.zmq_socket is not None:
+            self.zmq_socket.close()
+        if self.zmq_context is not None:
+            self.zmq_context.term()
         cv2.destroyAllWindows()
         print("Tracker stopped")
 
@@ -477,7 +625,7 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Use default camera (0) and dictionary (6x6_250)
+  # Use default camera (0) and dictionary (4x4_100)
   python aruco_tracker.py
 
   # Use camera 1 with 4x4_250 dictionary
@@ -486,16 +634,22 @@ Examples:
   # Use device path /dev/video4
   python aruco_tracker.py --device /dev/video4 --dict 4x4_250
 
-  # Use 5x5_100 dictionary
-  python aruco_tracker.py --dict 5x5_100
-
   # Use camera calibration file
   python aruco_tracker.py --calib calib_3937__0c45_6366__1280.json
 
+  # Enable ZMQ streaming on port 5555
+  python aruco_tracker.py --zmq-port 5555
+
+  # Save detections to file
+  python aruco_tracker.py --save detections.json
+
+  # Combined: calibration, ZMQ, and saving
+  python aruco_tracker.py --calib calib.json --zmq-port 5555 --save detections.json
+
 Available dictionaries:
-  4x4_50, 4x4_100, 4x4_250, 4x4_1000
+  4x4_50, 4x4_100 (default), 4x4_250, 4x4_1000
   5x5_50, 5x5_100, 5x5_250, 5x5_1000
-  6x6_50, 6x6_100, 6x6_250, 6x6_1000 (default: 6x6_250)
+  6x6_50, 6x6_100, 6x6_250, 6x6_1000
   7x7_50, 7x7_100, 7x7_250, 7x7_1000
         """,
     )
@@ -508,8 +662,8 @@ Available dictionaries:
     parser.add_argument(
         "--dict",
         type=str,
-        default="6x6_250",
-        help="ArUco dictionary name (e.g., 6x6_250, 4x4_100). Default: 6x6_250",
+        default="4x4_100",
+        help="ArUco dictionary name (e.g., 4x4_100, 6x6_250). Default: 4x4_100",
     )
     parser.add_argument(
         "--pose",
@@ -519,8 +673,8 @@ Available dictionaries:
     parser.add_argument(
         "--marker-size",
         type=float,
-        default=0.05,
-        help="Physical marker size in meters (default: 0.05)",
+        default=0.001,
+        help="Physical marker size in meters (default: 0.001)",
     )
     parser.add_argument(
         "--fast",
@@ -532,6 +686,18 @@ Available dictionaries:
         type=str,
         default=None,
         help="Path to camera calibration JSON file (e.g., calib_*.json)",
+    )
+    parser.add_argument(
+        "--zmq-port",
+        type=int,
+        default=None,
+        help="Enable ZMQ streaming on specified port (e.g., 5555)",
+    )
+    parser.add_argument(
+        "--save",
+        type=str,
+        default=None,
+        help="Save detections to JSON file (e.g., detections.json)",
     )
 
     args = parser.parse_args()
@@ -576,7 +742,11 @@ Available dictionaries:
 
     # Run tracker
     tracker.run(
-        show_pose=args.pose, camera_matrix=camera_matrix, dist_coeffs=dist_coeffs
+        show_pose=args.pose,
+        camera_matrix=camera_matrix,
+        dist_coeffs=dist_coeffs,
+        zmq_port=args.zmq_port,
+        save_file=args.save,
     )
 
 
