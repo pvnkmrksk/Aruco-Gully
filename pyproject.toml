@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aruco-hangar"
+version = "0.1.0"
+description = "Simple ArUco marker detection and tracking pipeline"
+requires-python = ">=3.8"
+dependencies = [
+    "opencv-contrib-python>=4.8.0",
+    "numpy>=1.24.0",
+]
+
+[tool.setuptools]
+py-modules = ["aruco_tracker", "generate_markers"]
+
+[project.scripts]
+aruco-tracker = "aruco_tracker:main"
+generate-markers = "generate_markers:main"
+
