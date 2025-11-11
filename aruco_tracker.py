@@ -288,67 +288,79 @@ class ArucoTracker:
             print(f"Failed to setup ZMQ: {e}")
             return False
 
-    def setup_saving(self, save_file="detections.json"):
+    def setup_saving(self, save_file="detections.csv"):
         """Setup file for saving detections"""
         self.save_file = save_file
         self.detections_log = []
+        # Write CSV header if file doesn't exist
+        if not os.path.exists(save_file):
+            with open(save_file, "w", encoding="utf-8") as f:
+                f.write("timestamp,id,tx,ty,tz,rx,ry,rz\n")
         print(f"Will save detections to: {save_file}")
 
-    def send_zmq_detection(self, marker_id, timestamp, rvec=None, tvec=None):
-        """Send detection data via ZMQ"""
-        if self.zmq_socket is None:
+    def send_zmq_detections(self, detections):
+        """
+        Send multiple detections via ZMQ in a single message
+
+        Args:
+            detections: List of detection dicts with 'id', 'timestamp', 'pose'
+        """
+        if self.zmq_socket is None or len(detections) == 0:
             return
 
-        detection_data = {"id": int(marker_id), "timestamp": timestamp, "pose": None}
-
-        if rvec is not None and tvec is not None:
-            # Convert rotation vector to Euler angles (simplified)
-            rvec_flat = rvec.flatten()
-            tvec_flat = tvec.flatten()
-            detection_data["pose"] = {
-                "rotation": rvec_flat.tolist(),
-                "translation": tvec_flat.tolist(),
-            }
-
         try:
-            self.zmq_socket.send_json(detection_data)
+            # Send all detections in a single message
+            self.zmq_socket.send_json({"detections": detections})
         except Exception as e:
             print(f"ZMQ send error: {e}")
 
     def save_detection(self, marker_id, timestamp, rvec=None, tvec=None):
-        """Save detection to log"""
+        """Save detection to log (CSV format)"""
         if self.save_file is None:
             return
 
-        detection = {"id": int(marker_id), "timestamp": timestamp, "pose": None}
+        # Format: timestamp,id,tx,ty,tz,rx,ry,rz
+        tx = ty = tz = rx = ry = rz = ""
 
         if rvec is not None and tvec is not None:
+            # Convert to numpy arrays if needed
+            rvec = np.array(rvec) if not isinstance(rvec, np.ndarray) else rvec
+            tvec = np.array(tvec) if not isinstance(tvec, np.ndarray) else tvec
+
             rvec_flat = rvec.flatten()
             tvec_flat = tvec.flatten()
-            detection["pose"] = {
-                "rotation": rvec_flat.tolist(),
-                "translation": tvec_flat.tolist(),
-            }
+            tx = f"{tvec_flat[0]:.6f}"
+            ty = f"{tvec_flat[1]:.6f}"
+            tz = f"{tvec_flat[2]:.6f}"
+            rx = f"{rvec_flat[0]:.6f}"
+            ry = f"{rvec_flat[1]:.6f}"
+            rz = f"{rvec_flat[2]:.6f}"
+
+        detection = {
+            "timestamp": timestamp,
+            "id": int(marker_id),
+            "tx": tx,
+            "ty": ty,
+            "tz": tz,
+            "rx": rx,
+            "ry": ry,
+            "rz": rz,
+        }
 
         self.detections_log.append(detection)
 
     def flush_detections(self):
-        """Write detections to file"""
+        """Write detections to CSV file"""
         if self.save_file is None or len(self.detections_log) == 0:
             return
 
         try:
-            # Append to file
-            if os.path.exists(self.save_file):
-                with open(self.save_file, "r", encoding="utf-8") as f:
-                    existing_data = json.load(f)
-            else:
-                existing_data = []
-
-            existing_data.extend(self.detections_log)
-
-            with open(self.save_file, "w", encoding="utf-8") as f:
-                json.dump(existing_data, f, indent=2)
+            # Append to CSV file
+            with open(self.save_file, "a", encoding="utf-8") as f:
+                for det in self.detections_log:
+                    f.write(
+                        f"{det['timestamp']},{det['id']},{det['tx']},{det['ty']},{det['tz']},{det['rx']},{det['ry']},{det['rz']}\n"
+                    )
 
             print(f"Saved {len(self.detections_log)} detections to {self.save_file}")
             self.detections_log = []
@@ -438,8 +450,8 @@ class ArucoTracker:
         if zmq_port is not None:
             self.setup_zmq(zmq_port)
 
-        # Setup saving if requested
-        if save_file is not None:
+        # Setup saving (default enabled)
+        if save_file is not None and save_file.lower() != "none":
             self.setup_saving(save_file)
 
         print("ArUco Tracker Started")
@@ -479,16 +491,33 @@ class ArucoTracker:
                     # Send via ZMQ and save if markers detected
                     if ids is not None and rvecs is not None:
                         timestamp = datetime.now().isoformat()
+                        detections_for_zmq = []
+
                         for i, marker_id in enumerate(ids):
                             marker_id = marker_id[0]
                             rvec = rvecs[i]
                             tvec = tvecs[i]
 
-                            # Send via ZMQ
-                            self.send_zmq_detection(marker_id, timestamp, rvec, tvec)
+                            # Prepare detection data
+                            rvec_flat = rvec.flatten()
+                            tvec_flat = tvec.flatten()
+
+                            detection_data = {
+                                "id": int(marker_id),
+                                "timestamp": timestamp,
+                                "pose": {
+                                    "rotation": rvec_flat.tolist(),
+                                    "translation": tvec_flat.tolist(),
+                                },
+                            }
+                            detections_for_zmq.append(detection_data)
 
                             # Save to log
                             self.save_detection(marker_id, timestamp, rvec, tvec)
+
+                        # Send all detections in a single ZMQ message
+                        if len(detections_for_zmq) > 0:
+                            self.send_zmq_detections(detections_for_zmq)
 
                     # Draw pose axes if requested
                     if show_pose and rvecs is not None:
@@ -640,11 +669,14 @@ Examples:
   # Enable ZMQ streaming on port 5555
   python aruco_tracker.py --zmq-port 5555
 
-  # Save detections to file
-  python aruco_tracker.py --save detections.json
+  # Save detections to custom file (default is detections.csv)
+  python aruco_tracker.py --save my_detections.csv
+
+  # Disable saving
+  python aruco_tracker.py --save none
 
   # Combined: calibration, ZMQ, and saving
-  python aruco_tracker.py --calib calib.json --zmq-port 5555 --save detections.json
+  python aruco_tracker.py --calib calib.json --zmq-port 5555 --save detections.csv
 
 Available dictionaries:
   4x4_50, 4x4_100 (default), 4x4_250, 4x4_1000
@@ -696,8 +728,8 @@ Available dictionaries:
     parser.add_argument(
         "--save",
         type=str,
-        default=None,
-        help="Save detections to JSON file (e.g., detections.json)",
+        default="detections.csv",
+        help="Save detections to CSV file (default: detections.csv). Use 'none' to disable.",
     )
 
     args = parser.parse_args()
@@ -740,13 +772,16 @@ Available dictionaries:
             camera_matrix = None
             dist_coeffs = None
 
+    # Handle save file (default is enabled, 'none' disables)
+    save_file = args.save if args.save.lower() != "none" else None
+
     # Run tracker
     tracker.run(
         show_pose=args.pose,
         camera_matrix=camera_matrix,
         dist_coeffs=dist_coeffs,
         zmq_port=args.zmq_port,
-        save_file=args.save,
+        save_file=save_file,
     )
 
 

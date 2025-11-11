@@ -1,13 +1,13 @@
 # ArUco Gully
 
-**ArUco Gully** (गली - "gully" means alley/corridor in many Indian languages) is a robust, real-time ArUco marker detection and tracking system designed for tracking markers on objects moving through narrow corridors or confined spaces. Features ZMQ streaming and data logging capabilities for real-time monitoring and analysis.
+**ArUco Gully** (ಗಲ್ಲಿ - "gully" means alley/corridor in Kannada and many other Indian languages) is a robust, real-time ArUco marker detection and tracking system designed for tracking markers on objects moving through narrow corridors or confined spaces. Features ZMQ streaming and CSV data logging capabilities for real-time monitoring and analysis.
 
 ## Features
 
 - Real-time ArUco marker detection from camera feed
 - Marker ID display and square outline visualization
 - ZMQ streaming for real-time detection data (ID, timestamp, pose)
-- Automatic detection logging to JSON files
+- Automatic detection logging to CSV files
 - Robust detection with multiple preprocessing strategies
 - Camera calibration support
 - Cross-platform support (Windows, macOS, Linux)
@@ -120,7 +120,7 @@ uv run python aruco_tracker.py [OPTIONS]
 - `--marker-size SIZE`: Physical marker size in meters. Default: 0.001
 - `--calib FILE`: Path to camera calibration JSON file
 - `--zmq-port PORT`: Enable ZMQ streaming on specified port (e.g., 5555)
-- `--save FILE`: Save detections to JSON file (e.g., detections.json)
+- `--save FILE`: Save detections to CSV file (default: detections.csv, use 'none' to disable)
 - `--pose`: Enable pose estimation axes (requires camera calibration)
 - `--fast`: Use faster but less robust detection
 
@@ -146,14 +146,14 @@ uv run python aruco_tracker.py --calib calib_3937__0c45_6366__1280.json
 uv run python aruco_tracker.py --zmq-port 5555
 ```
 
-**Save detections to file:**
+**Save detections to custom file:**
 ```bash
-uv run python aruco_tracker.py --save detections.json
+uv run python aruco_tracker.py --save my_detections.csv
 ```
 
 **Combined usage:**
 ```bash
-uv run python aruco_tracker.py --calib calib.json --zmq-port 5555 --save detections.json --marker-size 0.002
+  uv run python aruco_tracker.py --calib calib.json --zmq-port 5555 --save detections.csv --marker-size 0.002
 ```
 
 ## Camera Calibration
@@ -202,46 +202,67 @@ socket.setsockopt_string(zmq.SUBSCRIBE, "")
 
 while True:
     data = socket.recv_json()
-    print(f"Marker ID: {data['id']}, Timestamp: {data['timestamp']}")
-    if data['pose']:
-        print(f"Translation: {data['pose']['translation']}")
-        print(f"Rotation: {data['pose']['rotation']}")
+    # Data contains multiple detections in a single message
+    for detection in data['detections']:
+        print(f"Marker ID: {detection['id']}, Timestamp: {detection['timestamp']}")
+        if detection['pose']:
+            print(f"Translation: {detection['pose']['translation']}")
+            print(f"Rotation: {detection['pose']['rotation']}")
 ```
 
-**Data Format:**
+**ZMQ Data Format (supports multiple tags per message):**
 ```json
 {
-  "id": 0,
-  "timestamp": "2024-01-25T12:34:56.789",
-  "pose": {
-    "rotation": [0.1, 0.2, 0.3],
-    "translation": [0.01, 0.02, 0.15]
-  }
+  "detections": [
+    {
+      "id": 0,
+      "timestamp": "2024-01-25T12:34:56.789",
+      "pose": {
+        "rotation": [0.1, 0.2, 0.3],
+        "translation": [0.01, 0.02, 0.15]
+      }
+    },
+    {
+      "id": 1,
+      "timestamp": "2024-01-25T12:34:56.789",
+      "pose": {
+        "rotation": [0.2, 0.3, 0.4],
+        "translation": [0.02, 0.03, 0.16]
+      }
+    }
+  ]
 }
 ```
 
+Multiple markers detected in the same frame are sent together in a single ZMQ message for efficiency.
+
 ## Saving Detections
 
-Detections are automatically saved to a JSON file when using the `--save` option:
+Detections are automatically saved to a CSV file by default (`detections.csv`). You can specify a different filename or disable saving:
 
 ```bash
-uv run python aruco_tracker.py --save detections.json
+# Use default filename (detections.csv)
+uv run python aruco_tracker.py
+
+# Specify custom filename
+uv run python aruco_tracker.py --save my_detections.csv
+
+# Disable saving
+uv run python aruco_tracker.py --save none
 ```
 
-**Output Format:**
-```json
-[
-  {
-    "id": 0,
-    "timestamp": "2024-01-25T12:34:56.789",
-    "pose": {
-      "rotation": [0.1, 0.2, 0.3],
-      "translation": [0.01, 0.02, 0.15]
-    }
-  },
-  ...
-]
+**CSV Output Format:**
+```csv
+timestamp,id,tx,ty,tz,rx,ry,rz
+2024-01-25T12:34:56.789,0,0.010000,0.020000,0.150000,0.100000,0.200000,0.300000
+2024-01-25T12:34:56.890,1,0.015000,0.025000,0.160000,0.110000,0.210000,0.310000
 ```
+
+**Columns:**
+- `timestamp`: ISO format timestamp
+- `id`: Marker ID
+- `tx, ty, tz`: Translation (position) in meters
+- `rx, ry, rz`: Rotation vector components
 
 Detections are auto-saved every 5 seconds and on program exit.
 
@@ -255,41 +276,12 @@ The saved detection data can be visualized and analyzed using [PlotJuggler](http
    - Download from [https://www.plotjuggler.io/](https://www.plotjuggler.io/)
    - Available for Windows, macOS, and Linux
 
-2. **Convert JSON to PlotJuggler format:**
-   ```python
-   import json
-   import pandas as pd
-   
-   # Load detections
-   with open('detections.json', 'r') as f:
-       detections = json.load(f)
-   
-   # Convert to DataFrame
-   data = []
-   for det in detections:
-       data.append({
-           'timestamp': det['timestamp'],
-           'marker_id': det['id'],
-           'tx': det['pose']['translation'][0] if det['pose'] else None,
-           'ty': det['pose']['translation'][1] if det['pose'] else None,
-           'tz': det['pose']['translation'][2] if det['pose'] else None,
-           'rx': det['pose']['rotation'][0] if det['pose'] else None,
-           'ry': det['pose']['rotation'][1] if det['pose'] else None,
-           'rz': det['pose']['rotation'][2] if det['pose'] else None,
-       })
-   
-   df = pd.DataFrame(data)
-   df['timestamp'] = pd.to_datetime(df['timestamp'])
-   df.set_index('timestamp', inplace=True)
-   
-   # Save as CSV for PlotJuggler
-   df.to_csv('detections_plotjuggler.csv')
-   ```
-
-3. **Load in PlotJuggler:**
+2. **Load CSV directly in PlotJuggler:**
    - Open PlotJuggler
-   - File → Load Data → Select your CSV file
+   - File → Load Data → Select `detections.csv`
+   - The CSV is already in the correct format with timestamp, id, and pose data
    - Visualize marker trajectories, velocities, and pose over time
+   - Filter by marker ID to track individual markers
 
 **Alternative: Direct ZMQ streaming to PlotJuggler**
 
