@@ -1,6 +1,6 @@
-# ArUco Marker Detection and Tracking Pipeline
+# ArUco Gully
 
-A robust, real-time ArUco marker detection and tracking system using OpenCV with ZMQ streaming and data logging capabilities.
+**ArUco Gully** (गली - "gully" means alley/corridor in many Indian languages) is a robust, real-time ArUco marker detection and tracking system designed for tracking markers on objects moving through narrow corridors or confined spaces. Features ZMQ streaming and data logging capabilities for real-time monitoring and analysis.
 
 ## Features
 
@@ -245,6 +245,56 @@ uv run python aruco_tracker.py --save detections.json
 
 Detections are auto-saved every 5 seconds and on program exit.
 
+### Plotting Data with PlotJuggler
+
+The saved detection data can be visualized and analyzed using [PlotJuggler](https://www.plotjuggler.io/), a powerful time-series data visualization tool.
+
+**Steps to plot ArUco Gully data:**
+
+1. **Install PlotJuggler:**
+   - Download from [https://www.plotjuggler.io/](https://www.plotjuggler.io/)
+   - Available for Windows, macOS, and Linux
+
+2. **Convert JSON to PlotJuggler format:**
+   ```python
+   import json
+   import pandas as pd
+   
+   # Load detections
+   with open('detections.json', 'r') as f:
+       detections = json.load(f)
+   
+   # Convert to DataFrame
+   data = []
+   for det in detections:
+       data.append({
+           'timestamp': det['timestamp'],
+           'marker_id': det['id'],
+           'tx': det['pose']['translation'][0] if det['pose'] else None,
+           'ty': det['pose']['translation'][1] if det['pose'] else None,
+           'tz': det['pose']['translation'][2] if det['pose'] else None,
+           'rx': det['pose']['rotation'][0] if det['pose'] else None,
+           'ry': det['pose']['rotation'][1] if det['pose'] else None,
+           'rz': det['pose']['rotation'][2] if det['pose'] else None,
+       })
+   
+   df = pd.DataFrame(data)
+   df['timestamp'] = pd.to_datetime(df['timestamp'])
+   df.set_index('timestamp', inplace=True)
+   
+   # Save as CSV for PlotJuggler
+   df.to_csv('detections_plotjuggler.csv')
+   ```
+
+3. **Load in PlotJuggler:**
+   - Open PlotJuggler
+   - File → Load Data → Select your CSV file
+   - Visualize marker trajectories, velocities, and pose over time
+
+**Alternative: Direct ZMQ streaming to PlotJuggler**
+
+PlotJuggler can also receive data directly via ZMQ. Configure PlotJuggler's ZMQ subscriber to connect to the same port as ArUco Gully's publisher for real-time visualization.
+
 ## Controls
 
 - **'q'**: Quit the application
@@ -278,7 +328,7 @@ uv run python generate_markers.py --dict 4x4_100 --ids 0 1 2
 ## Project Structure
 
 ```
-Aruco Hangar/
+Aruco Gully/
 ├── aruco_tracker.py    # Main tracking application
 ├── generate_markers.py # Marker generation utility
 ├── pyproject.toml      # Project configuration and dependencies
@@ -307,14 +357,29 @@ Aruco Hangar/
 - May need to install camera drivers
 - PowerShell is recommended for running commands
 
+## Use Case: Tracking in Narrow Corridors
+
+ArUco Gully is specifically designed for tracking objects moving through narrow corridors or confined spaces. The system is optimized for:
+
+- **Small markers** (default 1mm) suitable for compact objects
+- **Robust detection** in challenging lighting conditions
+- **Real-time streaming** for monitoring moving objects
+- **Precise pose estimation** for trajectory analysis
+
+**Typical applications:**
+- Assembly line tracking
+- Conveyor belt monitoring
+- Small object tracking in confined spaces
+- Quality control in narrow production lines
+
 ## Tips for Best Results
 
 - Use good lighting conditions for better detection
 - Print markers on flat, non-reflective surfaces
-- Larger markers are easier to detect from greater distances
+- For narrow corridors, use smaller markers (0.001m default) for compact objects
 - Use camera calibration from CalibDB for accurate pose estimation
-- Default marker size is 0.001m (1mm) - adjust with `--marker-size` if needed
-- Enable robust mode (default) for better detection reliability
+- Enable robust mode (default) for better detection reliability in challenging environments
+- Position camera to minimize occlusion in tight spaces
 
 ## Troubleshooting
 

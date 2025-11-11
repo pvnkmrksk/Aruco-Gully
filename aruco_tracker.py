@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Simple ArUco Marker Detection and Tracking Pipeline
-Detects and tracks ArUco markers in real-time from camera feed
+ArUco Gully - Marker Tracking for Narrow Corridors
+Designed for tracking ArUco markers on objects moving through confined spaces
 """
 
 import cv2
@@ -621,7 +621,7 @@ def get_dictionary_from_name(name):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="ArUco Marker Detection and Tracking with 3D Cube Overlay",
+        description="ArUco Gully - Marker Tracking for Narrow Corridors",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:

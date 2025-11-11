@@ -3,9 +3,9 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "aruco-hangar"
+name = "aruco-gully"
 version = "0.1.0"
-description = "Simple ArUco marker detection and tracking pipeline"
+description = "ArUco marker tracking system for objects moving through narrow corridors"
 requires-python = ">=3.8"
 dependencies = [
     "opencv-contrib-python>=4.8.0",
